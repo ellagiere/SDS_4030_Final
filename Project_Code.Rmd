@@ -1,0 +1,151 @@
+---
+title: "SDS 4030 - Statistics for Data Science II"
+subtitle: Final Project Code
+author: 
+output: pdf_document
+fontsize: 12pt
+header-includes:
+  - \usepackage{hyperref}
+  - \hypersetup{pdfpagemode={UseNone}, pdfstartview=}
+  - \usepackage{amsthm}
+  - \theoremstyle{definition}
+  - \newtheorem{problem}{Problem}
+---
+
+```{r setup, include = FALSE}
+knitr::opts_chunk$set(fig.align = "center", fig.height = 4, fig.width = 5)
+knitr::opts_chunk$set(tidy.opts = list(width.cutoff = 68), tidy = TRUE)
+knitr::opts_chunk$set(message = FALSE)
+set.seed(0)
+```
+
+\problem
+\textit{Proof}.
+```{r}
+# loading dataset Here
+horse= read.table(file.choose(), header = TRUE)
+head(horse)
+
+```
+
+```{r}
+#fitted model w only quant variables
+
+quant_model = lm(respiratory_rate ~ temperature + pulse + packed_cell_volume + total_protein, data = horse)
+summary(model)
+```
+
+```{r}
+# qual, exact, large sample size -- lecture 21 reference
+
+beta <- coef(quant_model)
+X <- model.matrix(quant_model)
+n <- nrow(X)
+p <- ncol(X)
+S2 <- sum(residuals(quant_model)^2) / (n - p) 
+
+
+R = rbind(c(0, 5, -40, -100, 350)) #based on email he sent
+r = 3
+k <- length(r)
+
+FT <- crossprod(R %*% beta - r, solve(R %*% solve(t(X) %*% X) %*% t(R), R %*% beta - r)) / (k * S2)
+print(FT)
+
+pvalue <- pf(FT, k, n - p, lower.tail = FALSE)
+print(pvalue)
+
+quant_reduced <- lm(respiratory_rate ~ I(temperature + total_protein + pulse + packed_cell_volume), data=horse)
+summary(quant_reduced)
+
+
+anova(quant_reduced, quant_model)
+
+
+```
+
+```{r}
+# qual, asymptotic, large sample size -- lecture 21 reference
+
+WT = k * FT
+print(WT)
+pvalue = pchisq(WT, k, lower.tail = FALSE)
+print(pvalue)
+anova(quant_reduced, quant_model, test = "Chisq")
+```
+
+The conclusions agree of both the exact and asymptotic tests agree with each other. Both had a p-value of 0.9043546, so we fail to reject the null hypothesis. The Wald statistic and Exact F statistic are related as 
+
+\[W_n = \frac{\sigma}{S^2_{nQ1}} = k F\]
+
+where F is the F statistic from the exact test. So we would expect the conclusions of both tests to agree with each other.
+
+
+\qed
+
+\problem
+\textit{Proof}.
+
+```{r}
+#jackknife
+betajack <- matrix(0, n, p)
+for (i in 1:n) {
+  jack <- lm(respiratory_rate ~ temperature + pulse + packed_cell_volume + total_protein,data = horse[-i, ])
+  betajack[i, ] <- coef(jack)
+}
+betabar <- colMeans(betajack)
+print(betabar)
+
+SE <- apply(betajack, 2, sd) * sqrt((n - 1)^2 / n)
+print(SE)
+
+```
+
+```{r}
+#nonparametric bootstrap
+nboot <- 10000
+betaboot <- matrix(0, nboot, p)
+set.seed(123)
+
+for (k in 1:nboot) {
+  indices <- sample(1:n, n, replace = TRUE)
+  boot <- lm(respiratory_rate ~ temperature + pulse + packed_cell_volume + total_protein, data = horse[indices, ])
+  betaboot[k, ] <- coef(boot)
+}
+
+betabar <- colMeans(betaboot)
+print(betabar)
+
+SE <- apply(betaboot, 2, sd)
+print(SE)
+
+```
+
+```{r}
+alpha <- 0.05
+
+CInormal <- cbind(betabar - qnorm(1 - alpha / 2) * SE,
+                  betabar + qnorm(1 - alpha / 2) * SE)
+print(CInormal)
+
+CIpercentile <- cbind(
+  apply(betaboot, 2, quantile, probs = alpha / 2),
+  apply(betaboot, 2, quantile, probs = 1 - alpha / 2)
+)
+print(CIpercentile)
+
+beta_full <- coef(quant_model)
+CIpivotal <- cbind(
+  2 * beta_full - apply(betaboot, 2, quantile, probs = 1 - alpha / 2),
+  2 * beta_full - apply(betaboot, 2, quantile, probs = alpha / 2)
+)
+print(CIpivotal)
+
+```
+```{r}
+summary(quant_model)$coefficients[, "Std. Error"]
+
+```
+The coefficient estimates are essentially the same across methods (OLS / jackknife mean / bootstrap mean). Both resampling methods give very different estimates than OLS. the Jackknife SEs and bootstrap SEs are very similar. These SEs are much larger than OLS SEs. The two sets of intervals are very similar to one another, further supporting the stability of the bootstrap results. Compared to OLS confidence intervals, the bootstrap intervals are significantly wider.
+
+\qed
