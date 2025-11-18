@@ -45,8 +45,12 @@ p <- ncol(X)
 S2 <- sum(residuals(quant_model)^2) / (n - p) 
 
 
-R = rbind(c(0, 5, -40, -100, 350)) #based on email he sent
-r = 3
+R <- matrix(c(
+  0,  5,   0,    0, 350, 
+  0,  0,  40,  100,   0 
+), nrow = 2, byrow = TRUE)
+
+r <- c(3, 3)
 k <- length(r)
 
 FT <- crossprod(R %*% beta - r, solve(R %*% solve(t(X) %*% X) %*% t(R), R %*% beta - r)) / (k * S2)
