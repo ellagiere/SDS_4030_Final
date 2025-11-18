@@ -32,7 +32,7 @@ head(horse)
 #fitted model w only quant variables
 
 quant_model = lm(respiratory_rate ~ temperature + pulse + packed_cell_volume + total_protein, data = horse)
-summary(model)
+summary(quant_model)
 ```
 
 ```{r}
@@ -45,8 +45,12 @@ p <- ncol(X)
 S2 <- sum(residuals(quant_model)^2) / (n - p) 
 
 
-R = rbind(c(0, 5, -40, -100, 350)) #based on email he sent
-r = 3
+R <- matrix(c(
+  0,  5,   0,    0, 350, 
+  0,  0,  40,  100,   0 
+), nrow = 2, byrow = TRUE)
+
+r <- c(3, 3)
 k <- length(r)
 
 FT <- crossprod(R %*% beta - r, solve(R %*% solve(t(X) %*% X) %*% t(R), R %*% beta - r)) / (k * S2)
@@ -146,6 +150,139 @@ print(CIpivotal)
 summary(quant_model)$coefficients[, "Std. Error"]
 
 ```
-The coefficient estimates are essentially the same across methods (OLS / jackknife mean / bootstrap mean). Both resampling methods give very different estimates than OLS. the Jackknife SEs and bootstrap SEs are very similar. These SEs are much larger than OLS SEs. The two sets of intervals are very similar to one another, further supporting the stability of the bootstrap results. Compared to OLS confidence intervals, the bootstrap intervals are significantly wider.
+The coefficient estimates are essentially the same across methods (OLS / jackknife mean / bootstrap mean). Both resampling methods give very different estimates than OLS. The Jackknife SEs and bootstrap SEs are very similar. These SEs are much larger than OLS SEs. The two sets of intervals are very similar to one another, further supporting the stability of the bootstrap results. Compared to OLS confidence intervals, the bootstrap intervals are significantly wider.
+
+\qed
+
+\problem
+\textit{Proof}.
+
+```{r}
+# Nonparametric test of staistical significant: Permutation F Test
+
+f = summary(quant_model)$fstatistic[1]
+print(f)
+pvalue = pf(f, p, n - p - 1, lower.tail = FALSE)
+print(pvalue)
+nperm = 10000
+fperm = numeric(nperm)
+for (k in 1:nperm)
+{
+  Yperm = sample(Y)
+  perm = lm(respiratory_rate ~ temperature + pulse + packed_cell_volume + total_protein, horse)
+  fperm[k] = summary(perm)$fstatistic[1]
+}
+pvalue = (1 + sum(fperm > f)) / (1 + nperm)
+print(pvalue)
+```
+The estimated F test p-value through the permutation method is equal to 1e-4. Since the pvalue is less than alpha, we can reject the null hypothesis. The pvalue under the theoretical null distribution is 6.4e-12, which is smaller than the pvalue from the permutation test. However, they both lead to the rejection of the null.
+
+```{r}
+# Nonparametric test of statistical significance for the effect of temperature
+# Permutation t Test
+
+t = summary(quant_model)$coefficients["temperature", 3]
+print(t)
+pvalue = 2 * pt(abs(t), n - p - 1, lower.tail = FALSE)
+print(pvalue)
+aux = lm(respiratory_rate ~ pulse + packed_cell_volume + total_protein, horse)
+fitted = aux$fitted.values
+residuals = aux$residuals
+tperm = numeric(nperm)
+for (k in 1:nperm)
+{
+Yperm = fitted + sample(residuals)
+perm = lm(Yperm ~ temperature + pulse + packed_cell_volume + total_protein, horse)
+tperm[k] = summary(perm)$coefficients["temperature", 3]
+}
+pvalue = (1 + sum(abs(tperm) > abs(t))) / (1 + nperm)
+print(pvalue)
+
+```
+The estimated t test p-value through the permutation method is equal to 0.017. Since the pvalue is less than alpha, we can reject the null hypothesis. The pvalue under the theoretical null distribution is 0.015, which is very similar to the pvaqlue obtained from the permutation test.
+
+\qed
+
+\problem
+\textit{Proof}.
+
+```{r}
+# Check for possible covariate transformations
+
+par(mfrow = c(1, 5))
+boxplot(horse$temperature, ylab = "Temperature", pch = 16)
+boxplot(sqrt(horse$temperature), ylab = "Square Root of Temperature", pch = 16)
+boxplot(log(horse$temperature), ylab = "Log of Temperature", pch = 16)
+boxplot((horse$temperature)^2, ylab = "Square of Temperature", pch = 16)
+boxplot((horse$temperature)^(-1), ylab = "Inverse of Temperature", pch = 16)
+
+boxplot(horse$pulse, ylab = "Pulse", pch = 16)
+boxplot(sqrt(horse$pulse), ylab = "Square Root of Pulse", pch = 16)
+boxplot(log(horse$pulse), ylab = "Log of Pulse", pch = 16)
+boxplot((horse$pulse)^2, ylab = "Square of Pulse", pch = 16)
+boxplot((horse$pulse)^(-1), ylab = "Inverse of Pulse", pch = 16)
+
+boxplot(horse$total_protein, ylab = "Total Protein", pch = 16)
+boxplot(sqrt(horse$total_protein), ylab = "Square Root of Total Protein", pch = 16)
+boxplot(log(horse$total_protein), ylab = "Log of Total Protein", pch = 16)
+boxplot((horse$total_protein)^2, ylab = "Square of Total Protein", pch = 16)
+boxplot((horse$total_protein)^(-1), ylab = "Inverse of Total Protein", pch = 16)
+
+boxplot(horse$packed_cell_volume, ylab = "Packed Cell Volume", pch = 16)
+boxplot(sqrt(horse$packed_cell_volume), ylab = "Square Root of Packed Cell Volume", pch = 16)
+boxplot(log(horse$packed_cell_volume), ylab = "Log of Packed Cell Volume", pch = 16)
+boxplot((horse$packed_cell_volume)^2, ylab = "Square of Packed Cell Volume", pch = 16)
+boxplot((horse$packed_cell_volume)^(-1), ylab = "Inverse of Packed Cell Volume", pch = 16)
+```
+Pulse and total protein seem skewed, so need transformations.
+For pulse, the best transformation is inverse. For total protein, the best transformation is a log transformation. A log transformation is reasonable for packed cell volume to decrease outliers and make for a more symmetric distribution.
+
+```{r}
+fit = lm(respiratory_rate ~ temperature + (1/pulse) + log(packed_cell_volume) + log(total_protein), horse)
+plot(fit$fitted.values, rstandard(fit), xlab = "Fitted Values",
+ylab = "Standardized Residuals", pch = 16)
+abline(h = 0, lty = 2, lwd = 2)
+```
+Since constant variance is violated, a transformation should be applied to the response variable.
+
+```{r} 
+#Box-Cox transformation
+horse$inv_pulse = 1 / horse$pulse
+Y = horse$respiratory_rate
+
+lambda = seq(-2, 2, 0.01)
+loglik = numeric(401)
+for (i in 1:401)
+{
+  if (lambda[i] == 0)
+  {
+    Ypower = log(Y)
+  }
+  else
+  {
+    Ypower = (Y^lambda[i] - 1) / lambda[i]
+  }
+  power = lm(Ypower ~ temperature + inv_pulse + log(packed_cell_volume) + log(total_protein), horse)
+  loglik[i] = logLik(power)[1] + (lambda[i] - 1) * sum(log(Y))
+}
+
+CI = range(lambda[loglik > max(loglik) - qchisq(alpha, 1, lower.tail = FALSE) / 2])
+print(CI)
+```
+Since the CI is close to covering 0, a log transformation is reasonable.
+
+```{r}
+
+power = lm(log(respiratory_rate) ~ temperature + inv_pulse + log(packed_cell_volume) + log(total_protein), horse)
+plot(power$fitted.values, rstandard(power), main = "Log-
+Transformation", xlab = "Fitted Values", ylab = "
+Standardized Residuals", pch = 16)
+abline(h = 0, lty = 2, lwd = 2)
+
+library(qqconf)
+qq_conf_plot(rstandard(power), points_params = list(pch = 16, cex = 0.5))
+
+```
+All standardized residuals fall within the band, except one. This is enough to reject normality.
 
 \qed
