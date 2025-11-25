@@ -23,6 +23,7 @@ set.seed(0)
 \textit{Proof}.
 ```{r}
 # loading dataset Here
+
 horse= read.table(file.choose(), header = TRUE)
 head(horse)
 
@@ -37,6 +38,7 @@ summary(quant_model)
 
 ```{r}
 # qual, exact, large sample size -- lecture 21 reference
+
 
 beta <- coef(quant_model)
 X <- model.matrix(quant_model)
@@ -286,3 +288,214 @@ qq_conf_plot(rstandard(power), points_params = list(pch = 16, cex = 0.5))
 All standardized residuals fall within the band, except one. This is enough to reject normality.
 
 \qed
+
+\problem
+\textit{Proof}.
+```{r}
+
+#Best subset selection with valid post-selection inference 
+
+library(leaps)
+
+#New horse data frame with 5 transformed variables
+horse_transformed = data.frame(
+  Y = log(horse$respiratory_rate),
+  temperature = horse$temperature,
+  inv_pulse = 1 / horse$pulse,
+  log_pcv  = log(horse$packed_cell_volume),
+  log_tp   = log(horse$total_protein)
+)
+
+Y = horse_transformed$Y
+X =  horse_transformed[, -1]      
+n = nrow(X)
+P = ncol(X)
+
+
+#Set.seed for consistency
+set.seed(111)
+
+train = sample(n, 0.6 * n)
+valid = sample(setdiff(1:n, train), 0.2 * n)
+test  =  setdiff(1:n, c(train, valid))
+MSPE = numeric(P)
+
+full = lm(Y ~ ., horse_transformed, train)
+sub = regsubsets(formula(full), horse_transformed[train, ], nvmax = P)
+summary(sub)$which
+
+for (p in 1:P)
+{
+  fit = lm(Y ~ ., X[, summary(sub)$which[p, -1], drop = FALSE], train)
+  preds = predict(fit, X[valid, summary(sub)$which[p, -1], drop = FALSE])
+  MSPE[p] = mean((Y[valid] - preds)^2)
+}
+
+plot(MSPE, type="b", pch=16, lwd=4, ylab="Validation MSPE")
+
+p =  which.min(MSPE)
+final_model = lm(Y ~ ., X[, summary(sub)$which[p, -1], drop = FALSE], test)
+summary(final_model)
+
+
+```
+
+Based on the validation MSPE curve, the full (4 covariates) model provides the most accurate predictor for respiratory rate. Among all of the predictors, inverse pulse (inv_pulse) is the only statistically significant variable on the test set and shows that horses with higher pulse rates tend to have higher respiratory rates. The remaining predictors (temperature, log(packed cell volume), and log(total protein)) are not individually statistically significant.
+
+\qed
+
+\problem
+\textit{Proof}.
+```{r}
+#Investigate collinearity 
+library(faraway)
+cor(horse_transformed)
+plot(horse_transformed, pch = 16, cex = 0.25)
+
+cat("VIF:", vif(full))
+
+```
+
+Based on the VIFs and correlation plots, the transformed quantitative variables aren't very collinear. 
+```{r}
+#Ridge Regression 
+library(glmnet)
+train_boot = c(train, valid)
+X = as.matrix(X)
+cv.ridge = cv.glmnet(X[train_boot,], Y[train_boot], nfolds = 6, alpha = 0)
+ridge = glmnet(X[test,], Y[test], alpha = 0, lambda = cv.ridge$lambda.min)
+print(ridge$beta)
+
+#Bootstrap
+nboot = 10000
+beta = matrix(0, nboot, P)
+colnames(beta) = colnames(X)
+for (i in 1:nboot)
+{
+  ind = sample(test, replace = TRUE)
+  beta[i,] = glmnet(X[ind,], Y[ind], alpha = 0, lambda = cv.ridge$lambda.min)$beta[,]
+}
+SE = apply(beta, 2, sd)
+cat("SE after Bootstrap:", SE, "\n")
+
+
+ols = lm(Y ~ ., horse_transformed[train, ])
+cat("Summary of OLS coefficients for comparison:","\n")
+summary(ols)$coefficients
+
+
+```
+
+The ridge regression coefficients all shrunk closer to zero in comparison to the OLS coefficients. The bootstrap results SEs are slightly higher than the SEs calculated using OLS. 
+
+\qed
+
+\problem
+\textit{Proof}.
+
+```{r}
+#Lasso Regression
+cv.lasso = cv.glmnet(X[train,], Y[train], alpha = 1)
+lasso = glmnet(X[test,], Y[test], nfolds = 6, alpha = 1, lambda
+= cv.lasso$lambda.min)
+print(lasso$beta)
+
+for (i in 1:nboot)
+{
+  ind = sample(test, replace = TRUE)
+  beta[i,] = glmnet(X[ind,], Y[ind], alpha = 1, lambda = cv.lasso$lambda.min)$beta[,]
+}
+SE = apply(beta, 2, sd)
+cat("SE after Bootstrap:", SE, "\n")
+```
+While some of the estimated lasso coefficients become extremely close to zero, others stay the same. Because the quantitative variables aren't collinear, the estimated SEs of the lasso coefficients are greater than the SEs estimated by the OLS. 
+\qed
+
+\problem
+\textit{Proof}.
+
+```{r}
+#Investigate the interaction effects between pain and all available quantitative covariates on the response variable.
+
+Y = log(horse$respiratory_rate)
+inv_pulse = 1 / horse$pulse
+log_pcv  = log(horse$packed_cell_volume)
+log_tp   = log(horse$total_protein)
+horse$pain = as.factor(horse$pain)
+
+
+fit_interact = lm( Y ~ pain*(temperature + inv_pulse + log_pcv + log_tp), horse)
+summary(fit_interact)
+
+anova(fit_interact)
+
+```
+```{r}
+fit_interact = update(fit_interact, . ~ . - pain:log_tp)
+summary(fit_interact)
+anova(fit_interact)
+```
+
+```{r}
+fit_interact = update(fit_interact, . ~ . - pain:log_pcv)
+summary(fit_interact)
+anova(fit_interact)
+```
+```{r}
+fit_interact = update(fit_interact, . ~ . - log_pcv)
+summary(fit_interact)
+anova(fit_interact)
+```
+
+```{r}
+fit_interact = update(fit_interact, . ~ . - log_tp)
+summary(fit_interact)
+anova(fit_interact)
+```
+
+Final Model Equation: 
+\[
+\begin{aligned}
+Y_i
+&= \beta_0
++ \beta_1\,\text{pain}_{i,\text{continuous}}
++ \beta_2\,\text{pain}_{i,\text{depressed}}
++ \beta_3\,\text{pain}_{i,\text{mild}}
++ \beta_4\,\text{pain}_{i,\text{severe}} \\
+&\quad + \beta_5\,\text{temperature}_i
++ \beta_6\,\text{inv\_pulse}_i \\
+&\quad + \gamma_1\,\text{pain}_{i,\text{continuous}}\cdot\text{temperature}_i
++ \gamma_2\,\text{pain}_{i,\text{depressed}}\cdot\text{temperature}_i
++ \gamma_3\,\text{pain}_{i,\text{mild}}\cdot\text{temperature}_i
++ \gamma_4\,\text{pain}_{i,\text{severe}}\cdot\text{temperature}_i \\
+&\quad + \delta_1\,\text{pain}_{i,\text{continuous}}\cdot\text{inv\_pulse}_i
++ \delta_2\,\text{pain}_{i,\text{depressed}}\cdot\text{inv\_pulse}_i
++ \delta_3\,\text{pain}_{i,\text{mild}}\cdot\text{inv\_pulse}_i
++ \delta_4\,\text{pain}_{i,\text{severe}}\cdot\text{inv\_pulse}_i
++ \varepsilon_i.
+\end{aligned}
+\]
+
+
+Interpretation of each covariate in the final model: 
+
+- paincontinuous = –12.1040
+Holding other predictors constant, a horse classified as continuous pain is expected to have a log respiratory rate about 12.10 units lower than a horse with no pain.
+
+- paindepressed = –17.5964
+Holding other predictors constant, a depressed horse has a log respiratory rate about 17.60 units lower than a horse with no pain.
+
+- painmild = –10.8063
+Holding other predictors constant, a horse with mild pain has a log respiratory rate about 10.81 units lower than a no-pain horse.
+
+- painsevere = –13.0211
+Holding other predictors constant, a horse with severe pain has a log respiratory rate about 13.02 units lower than a no-pain horse.
+
+-temperature = –0.2557
+For a horse in the no-pain category with a fixed pulse, a 1°C increase in temperature is associated with a 0.256-unit decrease in log respiratory rate. Temperature is significant overall (ANOVA p = 0.0227), but its slope for no-pain horses is not individually significant.
+
+- inv_pulse = –64.7889
+Because inv_pulse = 1/pulse, a decrease in inv_pulse corresponds to a higher pulse rate. For a horse in the no-pain category, holding temperature constant, a one-unit increase in inv_pulse is associated with a 64.79-unit decrease in log respiratory rate.
+
+- paindepressed:temperature = 0.4473
+For depressed horses, the effect of temperature on log respiratory rate is 0.447 units more positive per degree than for no-pain horses.This is the only significant interaction in the model (p = 0.0151).
