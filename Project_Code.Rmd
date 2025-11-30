@@ -24,7 +24,7 @@ set.seed(0)
 ```{r}
 # loading dataset Here
 
-horse= read.table(file.choose(), header = TRUE)
+horse= read.table("horse.txt", header = TRUE)
 head(horse)
 
 ```
@@ -42,6 +42,7 @@ summary(quant_model)
 
 beta <- coef(quant_model)
 X <- model.matrix(quant_model)
+Y = horse$respiratory_rate
 n <- nrow(X)
 p <- ncol(X)
 S2 <- sum(residuals(quant_model)^2) / (n - p) 
@@ -441,6 +442,7 @@ fit_interact = update(fit_interact, . ~ . - pain:log_pcv)
 summary(fit_interact)
 anova(fit_interact)
 ```
+
 ```{r}
 fit_interact = update(fit_interact, . ~ . - log_pcv)
 summary(fit_interact)
@@ -499,3 +501,268 @@ Because inv_pulse = 1/pulse, a decrease in inv_pulse corresponds to a higher pul
 
 - paindepressed:temperature = 0.4473
 For depressed horses, the effect of temperature on log respiratory rate is 0.447 units more positive per degree than for no-pain horses.This is the only significant interaction in the model (p = 0.0151).
+
+\qed
+
+\problem
+\textit{Proof}.
+```{r}
+#Mixed-effects Model
+
+Y = log(horse$respiratory_rate)
+horse$pain = factor(horse$pain)
+horse$peristalsis = factor(horse$peristalsis)
+horse$abdominal_distension = factor(horse$abdominal_distension)
+horse$peripheral_pulse = factor(horse$peripheral_pulse)
+horse$temperature_of_extremities = factor(horse$temperature_of_extremities)
+horse$surgery <- factor(horse$surgery)
+horse$outcome <- factor(horse$outcome)
+```
+
+```{r}
+#chosen random effects
+
+# Used transformed variables from problem 8 for reference
+
+library(lme4)
+mixed_eff_mod = lmer(
+  Y ~ temperature + inv_pulse + log_pcv + log_tp +
+(1 | temperature_of_extremities) +(1 | abdominal_distension) +(1 | surgery),
+  data = horse)
+
+```
+
+```{r}
+sigma = data.frame(summary(mixed_eff_mod)$varcor)$sdcor
+names(sigma) = data.frame(summary(mixed_eff_mod)$varcor)$grp
+```
+
+```{r}
+ICC = sigma^2 / sum(sigma^2)
+print(ICC)
+```
+
+```{r}
+summary(mixed_eff_mod, correlation = FALSE)
+anova(mixed_eff_mod)
+```
+The covariates chosen as random effects are abdominal_distension, surgery and temperature_of_extremities, since these were the categorical variables with the largest nonzero variance components in the mixed-effects model. All categorical variables with exactly zero variance components were treated as fixed effects, as instructed.
+
+As we determined in question 4, the log transformation is the suitable transformation for our response variable.
+
+After fitting a mixed-effects model and examining the variance components, three categorical covariates had nonzero variances: abdominal_distension, temperature_of_extremities, and surgery.
+
+The total variation in your response variable explained by each random effect is as follows: abdominal_distension (variance = 0.02668, 2.67%) and temperature_of_extremities (variance = 0.00652, 0.65%), and surgery (variance = 0.005579, 0.56%).
+
+
+Another interpretation for each ICC:
+ICC(abdominal_distension) = 0.0936
+Two horses with the same abdominal distension level have an expected correlation of about 9.4% in their log respiratory rates. This points too a moderate grouping effect of adominal distension level on respiratory rate.
+
+ICC(temperature_of_extremities) = 0.0229
+Two horses with the same extremity temperature category have an expected correlation of about 2.3% in their log respiratory rates. This points to a very small grouping effect of extremity temperature on respiratory rate.
+
+ICC(surgery) = 0.01956768
+Two horses that underwent the same type of surgery have an expected correlation of about 2.0% in their log respiratory rates. This points to a very small grouping effect of surgery on respiratory rate.
+
+
+
+\qed
+
+\problem
+\textit{Proof}.
+```{r}
+base_model <- lm(Y ~ temperature + inv_pulse + log_pcv + log_tp, data = horse)
+print(summary(model))
+```
+
+```{r}
+Y = log(horse$respiratory_rate)
+X = model.matrix(base_model)
+n = dim(X)[1]
+p = dim(X)[2] - 1
+residuals = base_model$residuals
+plot(rstandard(base_model) ~ temperature + inv_pulse + log_pcv + log_tp, horse, ylab = "Standardized
+Residuals", pch = 16)
+abline(h = 0, lty = 2, lwd = 2)
+```
+```{r}
+#Studentized Breusch-Pagan Test
+Yaux = residuals(base_model)^2
+aux = lm(Yaux ~ temperature + inv_pulse + log_pcv + log_tp, horse)
+BP = n * summary(aux)$r.squared
+print(BP)
+pvalue = pchisq(BP, p, lower.tail = FALSE)
+print(pvalue)
+bptest(base_model)
+```
+
+```{r}
+#Brown-Forsythe Test -- pain
+
+library(car)
+leveneTest(Y ~ pain, data = horse)
+```
+
+```{r}
+#Brown-Forsythe Test -- outcome
+library(car)
+leveneTest(Y ~ outcome, data = horse)
+
+```
+```{r}
+#Brown-Forsythe Test -- temp of extremities
+
+library(car)
+leveneTest(Y ~ temperature_of_extremities, data = horse)
+
+```
+
+```{r}
+#Brown-Forsythe Test -- peripheral pulse
+library(car)
+leveneTest(Y ~ peripheral_pulse, data = horse)
+```
+
+```{r}
+#Brown-Forsythe Test -- abdominal distension
+
+library(car)
+leveneTest(Y ~ abdominal_distension, data = horse)
+
+```
+
+```{r}
+#Brown-Forsythe Test -- peristalsis
+
+library(car)
+leveneTest(Y ~ peristalsis, data = horse)
+```
+For the quantitative variables, a studentized Breusch–Pagan test was conducted. Because the p-value is well above 0.05, we fail to reject the null hypothesis of constant variance. So here is no evidence of heteroscedasticity, and the residual variance does not appear to depend on any of the included quantitative predictors.
+
+
+For the qualitative varibles, a Brown–Forsythe tests was conducted. 
+
+The Brown–Forsythe test yields p = 0.0006161, providing statistically significant evidence that the residual variance differs across pain groups (heteroscedasticity).
+
+The Brown–Forsythe test yields p = 0.2814, so there is no statistically significant evidence of differing variances across outcome groups (homoscedasticity).
+
+The Brown–Forsythe test yields p = 0.4136, so there is no statistically significant evidence that the residual variance differs across peripheral-pulse categories.
+
+The Brown–Forsythe test yields p = 0.0444, indicating statistically significant evidence that residual variances differ across abdominal-distension groups (heteroscedasticity).
+
+The Brown–Forsythe test yields p = 0.061, so there is no statistically significant evidence of variance differences across peristalsis groups at the 5% level.
+The Brown–Forsythe test yields p = 0.061, so there is no statistically significant evidence that the residual variance differs across peristalsis groups at the 5% level.
+
+\qed
+
+\problem
+\textit{Proof}.
+
+```{r}
+quant_model = lm(respiratory_rate ~ temperature + pulse + packed_cell_volume + total_protein, data = horse)
+
+summary(quant_model)
+
+X = model.matrix(quant_model)
+n = nrow(X)
+p = ncol(X)
+beta = coef(quant_model)
+residuals = quant_model$residuals
+
+```
+
+```{r}
+vcovOLS = summary(quant_model)$sigma^2 * summary(quant_model)$cov.unscaled
+vcovOLS
+confint(quant_model)
+
+```
+
+```{r}
+#Heteroscedasticity-Consistent Estimators
+
+
+library(sandwich)
+vcovHC3 = vcovHC(quant_model, type = "HC3")
+vcovHC3
+```
+
+```{r}
+alpha = 0.05
+HC3_CI = cbind(
+  beta - qt(1 - alpha/2, n - p) * sqrt(diag(vcovHC3)),
+  beta + qt(1 - alpha/2, n - p) * sqrt(diag(vcovHC3))
+)
+
+colnames(HC3_CI) = colnames(confint(quant_model))
+HC3_CI
+```
+
+```{r}
+library(lmtest)
+confint(coeftest(quant_model, vcov. = vcovHC3))
+```
+
+```{r}
+test = matrix(0, p, 4)
+rownames(test) = names(beta)
+colnames(test) = c("Estimate", "Std. Error", "t value", "Pr(>|t|)")
+
+test[,1] = beta
+test[,2] = sqrt(diag(vcovHC3))
+test[,3] = test[,1] / test[,2]
+test[,4] = 2 * pt(abs(test[,3]), n - p, lower.tail = FALSE)
+
+test
+```
+
+```{r}
+
+coeftest(quant_model, vcov. = vcovHC3)
+```
+The HC3 standard errors are larger for every coefficient. 
+(Intercept) OLS SE: 52.6687 HC3 SE: 57.4952
+temperature OLS SE:1.3922 HC3 SE:1.5417
+pulse OLS SE:0.04231 HC3 SE:0.04909
+PCV OLS SE: 0.10832 HC3 SE: 0.12214
+total_protein OLS SE: 0.03676 HC3 SE:0.03822.
+
+As the SEs increased, the HC3 t-values got smaller. 
+(Intercept): -2.145 to -1.965
+temperature: 2.442 to 2.205
+pulse: 5.967 to 5.144
+PCV: -0.640 to -0.568
+total_protein: -1.011 to -0.972.
+
+The p-values got larger. 
+(Intercept)	0.0330 to 0.0506 (no longer < 0.05)	
+temperature	0.0154 to 0.0284 (still < 0.05)	
+pulse	8.82e-09 to 5.67e-07 (still extremely significant)	
+PCV	0.5228 to 0.5709 (still NS)	
+total_protein	0.3132 to 0.3319 (still NS)
+
+The intercept is the only coefficient whose significance status changed. In the OLS (Intercept) is significant (p = 0.033), but HC3 shows it is only marginally significant (p = 0.0506).
+
+The HC3 CIs are consistently wider:
+
+(Intercept) OLS [-216.74, -9.22]; HC3 [-226.25, 0.29]. Which now covers zero.
+temperature: OLS [0.656,6.142]; HC3 [0.362,6.43]
+pulse: OLS [0.169,0.336]; HC3 [0.156,0.349]
+PCV: OLS [-0.283, 0.144]; HC3 [-0.310, 0.171]
+total_protein: OLS [-0.109, 0.0353]; HC3 [-0.112, 0.038]
+
+The qualitative conclusions remained the same for temperature, pulse, PCV and total_protein. 
+\qed
+
+
+\problem
+\textit{Proof}.
+```{r}
+
+```
+\qed
+
+
+
+
