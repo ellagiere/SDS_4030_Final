@@ -312,10 +312,6 @@ X =  horse_transformed[, -1]
 n = nrow(X)
 P = ncol(X)
 
-
-#Set.seed for consistency
-set.seed(111)
-
 train = sample(n, 0.6 * n)
 valid = sample(setdiff(1:n, train), 0.2 * n)
 test  =  setdiff(1:n, c(train, valid))
@@ -573,7 +569,7 @@ Two horses that underwent the same type of surgery have an expected correlation 
 \textit{Proof}.
 ```{r}
 base_model <- lm(Y ~ temperature + inv_pulse + log_pcv + log_tp, data = horse)
-print(summary(model))
+print(summary(base_model))
 ```
 
 ```{r}
@@ -594,6 +590,7 @@ BP = n * summary(aux)$r.squared
 print(BP)
 pvalue = pchisq(BP, p, lower.tail = FALSE)
 print(pvalue)
+library(lmtest)
 bptest(base_model)
 ```
 
@@ -660,7 +657,7 @@ The Brown–Forsythe test yields p = 0.061, so there is no statistically signifi
 \textit{Proof}.
 
 ```{r}
-quant_model = lm(respiratory_rate ~ temperature + pulse + packed_cell_volume + total_protein, data = horse)
+quant_model = lm(Y ~ temperature + inv_pulse + log_pcv + log_tp, horse)
 
 summary(quant_model)
 
@@ -759,10 +756,99 @@ The qualitative conclusions remained the same for temperature, pulse, PCV and to
 \problem
 \textit{Proof}.
 ```{r}
-
+# Weighted LS using temperature
+fit = lm(Y ~ temperature, horse)
+summary(fit)
+X = model.matrix(fit)
+n = dim(X)[1]
+p = dim(X)[2] - 1
+residuals = fit$residuals
+plot(rstandard(fit) ~ temperature, horse, ylab = "Standardized
+Residuals", pch = 16)
+abline(h = 0, lty = 2, lwd = 2)
 ```
+The variance of the residuals appears to be an increasing function of temperature. Since the weights are inversely proportional to the residual variances, we infer that the weights would need to be a decreasing function of temperature.
+
+```{r}
+w = rep(1, n)
+err = Inf
+tol = 1e-10
+niter = 0
+maxiter = 1e3
+while (err > tol & niter < maxiter)
+{
+  aux = lm(log(residuals^2) ~ log(temperature), horse)
+  err = sum(abs(w - exp(-aux$fitted.values))) / sum(w)
+  w = exp(-aux$fitted.values)
+  WLS = lm(Y ~ temperature, horse, weights = w)
+  residuals = WLS$residuals
+  niter = niter + 1
+}
+summary(aux)
+summary(WLS)
+```
+We estimate that $\sigma^2_i\approx1.64\times 10^{-16}\cdot temperature_i^{9.33}$ 
+```{r}
+plot(WLS$fitted.values, rstandard(WLS), xlab = "Fitted Values", ylab = "Weighted Standardized Residuals", pch = 16)
+abline(h = 0, lty = 2, lwd = 2)
+```
+
+```{r}
+WLS_all = lm(Y ~ temperature + inv_pulse + log_pcv + log_tp, horse, weights = w)
+summary(WLS_all)
+```
+The WLS standard errors are slightly smaller than the corresponding OLS estimate.
+
+```{r}
+#t-test and CIs
+t_WLS = coef(WLS_all) / summary(WLS_all)$coefficients[, "Std. Error"]
+t_WLS
+
+CI_WLS = confint(WLS_all, level = 0.95)
+CI_WLS
+
+
+t_OLS = coef(quant_model) / summary(quant_model)$coefficients[, "Std. Error"]
+t_OLS
+
+CI_OLS = confint(quant_model, level = 0.95)
+CI_OLS
+```
+Temperature became significant under WLS, where is was insignificant in OLS. Inv_pulse is highly significant in both. The other coefficients don't change much in significance. The temperature CI under WLS does not include 0, and it does in OLS. WLS gives slightly narrower CIs for all covariates compared to OLS. 
+
 \qed
 
+\problem
+\textit{Proof}.
+```{r}
+# mean comparisons for pain
+Q = factor(horse$pain)
+n = length(Q)
+K = length(levels(Q))
+mu = aggregate(Y ~ pain, data = horse, FUN = function(x) mean(x))[,2]
+sigma = sqrt(sum((Y - mu[Q])^2) / (n - K))
+SE = sigma * sqrt(2 * K / n)
+diff = outer(mu, mu, "-")
+diff = diff[lower.tri(diff)]
+lab = outer(levels(Q), levels(Q), function(x, y) {paste0(x, "-", y)})
+names(diff) = lab[lower.tri(lab)]
+CI = cbind(diff - qt(1 - alpha / 2, n - K) * SE, diff + qt(1 - alpha / 2, n - K) * SE)
+colnames(CI) = c("Lower Bound", "Upper Bound")
+print(CI)
+```
+```{r}
+# Tukey’s Honestly Significant Difference Method
+# cannot do manual calculations because group sizes are unequal
+TukeyHSD(aov(Y ~ pain, horse))
+```
+Tukey’s Honestly Significant Difference Method (Tukey's HSD) calculates pairwise differences using a critical value from Tukey's studentized range distribution rather than the t-distribution. It can only take positive values and is parametrized by the number of groups (k) and the residual (n-k) degrees of freedom. For each pair of group means $\hat{\mu}_k-\hat{\mu}_\ell$, simultaneous 95% CIs are computed such that FWER $\leq\alpha$ using the upper $\alpha$-quantile of the studentized range divided by $\sqrt2$ and multiplied by the pooled sample standard deviation times the square root of 2 times the number of groups divded by the sample size, eg $\hat{\mu}_k-\hat{\mu}_\ell\pm \frac{R_{K,n-K;\alpha}}{\sqrt2} \cdot S\sqrt{\frac{2K}{n}}$.
 
+The CIs using the t-distribution are generally wider than the narrower Tukey's estimates. Tukey's estimates take into account the studentized range distribution, which adjusts for the fact that multiple comparisons are being made simultaneously while controlling the FWER. Since Tukey's is more conservative, there are less significant comparisons under this method. Only 2 comparisons are significant under Tukey's (continuous-alert and depressed-alert). These CIs do not contain 0. For the CIs using the t-distribution, both of those comparisons are significant, as well as two others (severe-alert and mild-continuous).
+\qed
+
+\problem
+\textit{Proof}.
+
+\qed
 
 
