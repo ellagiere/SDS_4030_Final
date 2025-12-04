@@ -30,6 +30,47 @@ head(horse)
 ```
 
 ```{r}
+#starter EDA on resp rate
+library(ggplot2)
+
+resp_summary <- summary(horse$respiratory_rate)
+resp_summary
+
+mean_resp <- mean(horse$respiratory_rate, na.rm = TRUE)
+median_resp <- median(horse$respiratory_rate, na.rm = TRUE)
+min_resp <- min(horse$respiratory_rate, na.rm = TRUE)
+max_resp <- max(horse$respiratory_rate, na.rm = TRUE)
+
+cat("Mean:", mean_resp, "\n")
+cat("Median:", median_resp, "\n")
+cat("Min:", min_resp, "\n")
+cat("Max:", max_resp, "\n")
+
+ggplot(horse, aes(x = respiratory_rate)) +
+  geom_histogram(bins = 15, fill = "gray", color = "black") +
+  geom_vline(xintercept = 8, linetype = "dashed", color = "red", size=1) +
+  geom_vline(xintercept = 16, linetype = "dashed", color = "red", size=1) +
+  annotate("rect", xmin=8, xmax=16, ymin=0, ymax=Inf, alpha=0.1, fill="red") +
+  labs(title = "Respiratory Rate Distribution with Normal Range (8-16)",
+       x = "Respiratory Rate (breaths/min)",
+       y = "Count")
+
+
+```
+
+```{r}
+#correlation matrix for now
+
+library(corrplot)
+
+numeric_vars <- c("respiratory_rate", "pulse", "temperature", "packed_cell_volume", "total_protein")
+corr_matrix <- cor(horse[, numeric_vars], use = "complete.obs")
+
+corrplot(corr_matrix, method = "color", addCoef.col = "black", tl.cex = 0.8)
+
+```
+
+```{r}
 #fitted model w only quant variables
 
 quant_model = lm(respiratory_rate ~ temperature + pulse + packed_cell_volume + total_protein, data = horse)
@@ -354,6 +395,7 @@ cat("VIF:", vif(full))
 ```
 
 Based on the VIFs and correlation plots, the transformed quantitative variables aren't very collinear. 
+
 ```{r}
 #Ridge Regression 
 library(glmnet)
@@ -505,14 +547,17 @@ For depressed horses, the effect of temperature on log respiratory rate is 0.447
 ```{r}
 #Mixed-effects Model
 
-Y = log(horse$respiratory_rate)
+Y = horse$respiratory_rate
 horse$pain = factor(horse$pain)
+horse$surgical_lesion = factor(horse$surgical_lesion)
 horse$peristalsis = factor(horse$peristalsis)
 horse$abdominal_distension = factor(horse$abdominal_distension)
 horse$peripheral_pulse = factor(horse$peripheral_pulse)
 horse$temperature_of_extremities = factor(horse$temperature_of_extremities)
 horse$surgery <- factor(horse$surgery)
 horse$outcome <- factor(horse$outcome)
+horse$age <- factor(horse$age)
+
 ```
 
 ```{r}
@@ -522,8 +567,8 @@ horse$outcome <- factor(horse$outcome)
 
 library(lme4)
 mixed_eff_mod = lmer(
-  Y ~ temperature + inv_pulse + log_pcv + log_tp +
-(1 | temperature_of_extremities) +(1 | abdominal_distension) +(1 | surgery),
+  Y ~ temperature + inv_pulse + log_pcv + log_tp + outcome + surgery + abdominal_distension + pain + 
+(1 | temperature_of_extremities) +(1 | peripheral_pulse) + (1 | age) + (1 |surgical_lesion ) + (1 | peristalsis),
   data = horse)
 
 ```
@@ -542,11 +587,43 @@ print(ICC)
 summary(mixed_eff_mod, correlation = FALSE)
 anova(mixed_eff_mod)
 ```
-The covariates chosen as random effects are abdominal_distension, surgery and temperature_of_extremities, since these were the categorical variables with the largest nonzero variance components in the mixed-effects model. All categorical variables with exactly zero variance components were treated as fixed effects, as instructed.
+```{r}
+#Box Cox
+Y = horse$respiratory_rate
 
-As we determined in question 4, the log transformation is the suitable transformation for our response variable.
+lambda = seq(-2, 2, 0.01)
+loglik = numeric(401)
+for (i in 1:401)
+{
+  if (lambda[i] == 0)
+  {
+    Ypower = log(Y)
+  }
+  else
+  {
+    Ypower = (Y^lambda[i] - 1) / lambda[i]
+  }
+  power = lmer(Ypower ~ temperature + inv_pulse + log_pcv + log_tp + outcome + surgery + abdominal_distension + pain + 
+(1 | temperature_of_extremities) +(1 | peripheral_pulse) + (1 | age) + (1 |surgical_lesion ) + (1 | peristalsis), horse)
+  loglik[i] = logLik(power)[1] + (lambda[i] - 1) * sum(log(Y))
+}
 
-After fitting a mixed-effects model and examining the variance components, three categorical covariates had nonzero variances: abdominal_distension, temperature_of_extremities, and surgery.
+```
+
+```{r}
+alpha = 0.05
+CI = range(lambda[loglik > max(loglik) - qchisq(alpha, 1, lower.tail = FALSE) / 2])
+print(CI)
+plot(lambda, loglik, "l", xlab = expression(lambda), ylab = "
+Profile Log-Likelihood", lwd = 4)
+abline(h = max(loglik) - qchisq(0.95, 1) / 2, lty = 2, lwd = 4)
+abline(v = CI, lty = 2, lwd = 4)
+```
+
+
+The covariates chosen as random effects are age, peripheral_pulse, peristalsis, and temperature_of_extremities, since these were the categorical variables with the largest nonzero variance components in the mixed-effects model. All categorical variables with exactly zero variance components were treated as fixed effects, as instructed.
+
+A suitable transformation for our response variable is.
 
 The total variation in your response variable explained by each random effect is as follows: abdominal_distension (variance = 0.02668, 2.67%) and temperature_of_extremities (variance = 0.00652, 0.65%), and surgery (variance = 0.005579, 0.56%).
 
@@ -657,9 +734,11 @@ The Brown–Forsythe test yields p = 0.061, so there is no statistically signifi
 \textit{Proof}.
 
 ```{r}
+
+Y = log(horse$respiratory_rate)
 quant_model = lm(Y ~ temperature + inv_pulse + log_pcv + log_tp, horse)
 
-summary(quant_model)
+ols_summary = summary(quant_model)
 
 X = model.matrix(quant_model)
 n = nrow(X)
@@ -716,14 +795,30 @@ test
 
 ```{r}
 
-coeftest(quant_model, vcov. = vcovHC3)
+hc3_test = coeftest(quant_model, vcov. = vcovHC3)
+
 ```
-The HC3 standard errors are larger for every coefficient. 
-(Intercept) OLS SE: 52.6687 HC3 SE: 57.4952
-temperature OLS SE:1.3922 HC3 SE:1.5417
-pulse OLS SE:0.04231 HC3 SE:0.04909
-PCV OLS SE: 0.10832 HC3 SE: 0.12214
-total_protein OLS SE: 0.03676 HC3 SE:0.03822.
+
+```{r}
+
+results_table <- data.frame(
+  Coefficient = rownames(ols_summary$coefficients),
+  Estimate = ols_summary$coefficients[, "Estimate"],
+  OLS_SE = ols_summary$coefficients[, "Std. Error"],
+  HC3_SE = sqrt(diag(vcovHC3)),
+  t_HC3 = hc3_test[, "t value"],
+  p_HC3 = hc3_test[, "Pr(>|t|)"]
+)
+
+results_table
+```
+
+The HC3 standard errors are larger for most of the coefficients. 
+(Intercept) OLS SE: 1.86166629 HC3 SE: 1.83378787
+temperature OLS SE:0.04630927 HC3 SE:0.04588259
+pulse OLS SE: 6.97628258 HC3 SE:7.07424389
+PCV OLS SE: 0.13902340 HC3 SE: 0.13902340
+total_protein OLS SE: 0.03208568 HC3 SE:0.03208568
 
 As the SEs increased, the HC3 t-values got smaller. 
 (Intercept): -2.145 to -1.965
@@ -750,6 +845,7 @@ PCV: OLS [-0.283, 0.144]; HC3 [-0.310, 0.171]
 total_protein: OLS [-0.109, 0.0353]; HC3 [-0.112, 0.038]
 
 The qualitative conclusions remained the same for temperature, pulse, PCV and total_protein. 
+
 \qed
 
 
