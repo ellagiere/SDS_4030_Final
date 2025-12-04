@@ -424,14 +424,13 @@ log_tp   = log(horse$total_protein)
 horse$pain = as.factor(horse$pain)
 
 
-fit_interact = lm( Y ~ pain*(temperature + inv_pulse + log_pcv + log_tp), horse)
-summary(fit_interact)
+full_interact = lm( Y ~ pain*(temperature + inv_pulse + log_pcv + log_tp), horse)
+summary(full_interact)
 
-anova(fit_interact)
-
+anova(full_interact)
 ```
 ```{r}
-fit_interact = update(fit_interact, . ~ . - pain:log_tp)
+fit_interact = update(full_interact, . ~ . - pain:log_pcv)
 summary(fit_interact)
 anova(fit_interact)
 ```
@@ -452,6 +451,12 @@ fit_interact = update(fit_interact, . ~ . - log_tp)
 summary(fit_interact)
 anova(fit_interact)
 ```
+```{r}
+fit_interact = update(fit_interact, . ~ . - paincontinuous:temperature)
+summary(fit_interact)
+anova(fit_interact)
+```
+
 
 Final Model Equation: 
 \[
