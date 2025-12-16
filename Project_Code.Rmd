@@ -23,8 +23,50 @@ set.seed(0)
 \textit{Proof}.
 ```{r}
 # loading dataset Here
-horse= read.table(file.choose(), header = TRUE)
+
+horse= read.table("horse.txt", header = TRUE)
 head(horse)
+
+```
+
+```{r}
+#starter EDA on resp rate
+library(ggplot2)
+
+resp_summary <- summary(horse$respiratory_rate)
+resp_summary
+
+mean_resp <- mean(horse$respiratory_rate, na.rm = TRUE)
+median_resp <- median(horse$respiratory_rate, na.rm = TRUE)
+min_resp <- min(horse$respiratory_rate, na.rm = TRUE)
+max_resp <- max(horse$respiratory_rate, na.rm = TRUE)
+
+cat("Mean:", mean_resp, "\n")
+cat("Median:", median_resp, "\n")
+cat("Min:", min_resp, "\n")
+cat("Max:", max_resp, "\n")
+
+ggplot(horse, aes(x = respiratory_rate)) +
+  geom_histogram(bins = 15, fill = "gray", color = "black") +
+  geom_vline(xintercept = 8, linetype = "dashed", color = "red", size=1) +
+  geom_vline(xintercept = 16, linetype = "dashed", color = "red", size=1) +
+  annotate("rect", xmin=8, xmax=16, ymin=0, ymax=Inf, alpha=0.1, fill="red") +
+  labs(title = "Respiratory Rate Distribution with Normal Range (8-16)",
+       x = "Respiratory Rate (breaths/min)",
+       y = "Count")
+
+
+```
+
+```{r}
+#correlation matrix for now
+
+library(corrplot)
+
+numeric_vars <- c("respiratory_rate", "pulse", "temperature", "packed_cell_volume", "total_protein")
+corr_matrix <- cor(horse[, numeric_vars], use = "complete.obs")
+
+corrplot(corr_matrix, method = "color", addCoef.col = "black", tl.cex = 0.8)
 
 ```
 
@@ -38,8 +80,10 @@ summary(quant_model)
 ```{r}
 # qual, exact, large sample size -- lecture 21 reference
 
+
 beta <- coef(quant_model)
 X <- model.matrix(quant_model)
+Y = horse$respiratory_rate
 n <- nrow(X)
 p <- ncol(X)
 S2 <- sum(residuals(quant_model)^2) / (n - p) 
@@ -284,5 +328,609 @@ qq_conf_plot(rstandard(power), points_params = list(pch = 16, cex = 0.5))
 
 ```
 All standardized residuals fall within the band, except one. This is enough to reject normality.
+
+\qed
+
+\problem
+\textit{Proof}.
+```{r}
+
+#Best subset selection with valid post-selection inference 
+
+library(leaps)
+
+#New horse data frame with 5 transformed variables
+horse_transformed = data.frame(
+  Y = log(horse$respiratory_rate),
+  temperature = horse$temperature,
+  inv_pulse = 1 / horse$pulse,
+  log_pcv  = log(horse$packed_cell_volume),
+  log_tp   = log(horse$total_protein)
+)
+
+Y = horse_transformed$Y
+X =  horse_transformed[, -1]      
+n = nrow(X)
+P = ncol(X)
+
+train = sample(n, 0.6 * n)
+valid = sample(setdiff(1:n, train), 0.2 * n)
+test  =  setdiff(1:n, c(train, valid))
+MSPE = numeric(P)
+
+full = lm(Y ~ ., horse_transformed, train)
+sub = regsubsets(formula(full), horse_transformed[train, ], nvmax = P)
+summary(sub)$which
+
+for (p in 1:P)
+{
+  fit = lm(Y ~ ., X[, summary(sub)$which[p, -1], drop = FALSE], train)
+  preds = predict(fit, X[valid, summary(sub)$which[p, -1], drop = FALSE])
+  MSPE[p] = mean((Y[valid] - preds)^2)
+}
+
+plot(MSPE, type="b", pch=16, lwd=4, ylab="Validation MSPE")
+
+p =  which.min(MSPE)
+final_model = lm(Y ~ ., X[, summary(sub)$which[p, -1], drop = FALSE], test)
+summary(final_model)
+
+
+```
+
+Based on the validation MSPE curve, the full (4 covariates) model provides the most accurate predictor for respiratory rate. Among all of the predictors, inverse pulse (inv_pulse) is the only statistically significant variable on the test set and shows that horses with higher pulse rates tend to have higher respiratory rates. The remaining predictors (temperature, log(packed cell volume), and log(total protein)) are not individually statistically significant.
+
+\qed
+
+\problem
+\textit{Proof}.
+```{r}
+#Investigate collinearity 
+library(faraway)
+cor(horse_transformed)
+plot(horse_transformed, pch = 16, cex = 0.25)
+
+cat("VIF:", vif(full))
+
+```
+
+Based on the VIFs and correlation plots, the transformed quantitative variables aren't very collinear. 
+
+```{r}
+#Ridge Regression 
+library(glmnet)
+train_boot = c(train, valid)
+X = as.matrix(X)
+cv.ridge = cv.glmnet(X[train_boot,], Y[train_boot], nfolds = 6, alpha = 0)
+ridge = glmnet(X[test,], Y[test], alpha = 0, lambda = cv.ridge$lambda.min)
+print(ridge$beta)
+
+#Bootstrap
+nboot = 10000
+beta = matrix(0, nboot, P)
+colnames(beta) = colnames(X)
+for (i in 1:nboot)
+{
+  ind = sample(test, replace = TRUE)
+  beta[i,] = glmnet(X[ind,], Y[ind], alpha = 0, lambda = cv.ridge$lambda.min)$beta[,]
+}
+SE = apply(beta, 2, sd)
+cat("SE after Bootstrap:", SE, "\n")
+
+
+ols = lm(Y ~ ., horse_transformed[train, ])
+cat("Summary of OLS coefficients for comparison:","\n")
+summary(ols)$coefficients
+
+
+```
+
+The ridge regression coefficients all shrunk closer to zero in comparison to the OLS coefficients. The bootstrap results SEs are slightly higher than the SEs calculated using OLS. 
+
+\qed
+
+\problem
+\textit{Proof}.
+
+```{r}
+#Lasso Regression
+cv.lasso = cv.glmnet(X[train,], Y[train], alpha = 1)
+lasso = glmnet(X[test,], Y[test], nfolds = 6, alpha = 1, lambda
+= cv.lasso$lambda.min)
+print(lasso$beta)
+
+for (i in 1:nboot)
+{
+  ind = sample(test, replace = TRUE)
+  beta[i,] = glmnet(X[ind,], Y[ind], alpha = 1, lambda = cv.lasso$lambda.min)$beta[,]
+}
+SE = apply(beta, 2, sd)
+cat("SE after Bootstrap:", SE, "\n")
+```
+While some of the estimated lasso coefficients become extremely close to zero, others stay the same. Because the quantitative variables aren't collinear, the estimated SEs of the lasso coefficients are greater than the SEs estimated by the OLS. 
+\qed
+
+\problem
+\textit{Proof}.
+
+```{r}
+#Investigate the interaction effects between pain and all available quantitative covariates on the response variable.
+
+#Factor qualitative variable
+horse$pain = as.factor(horse$pain)
+
+Y = log(horse$respiratory_rate)
+inv_pulse = 1 / horse$pulse
+log_pcv  = log(horse$packed_cell_volume)
+log_tp   = log(horse$total_protein)
+horse$pain = as.factor(horse$pain)
+
+
+fit_interact = lm( Y ~ pain*(temperature + inv_pulse + log_pcv + log_tp), horse)
+anova(fit_interact)
+
+```
+```{r}
+fit_interact = update(fit_interact, . ~ . - pain:log_tp)
+anova(fit_interact)
+```
+
+```{r}
+fit_interact = update(fit_interact, . ~ . - pain:inv_pulse)
+anova(fit_interact)
+```
+
+```{r}
+fit_interact = update(fit_interact, . ~ . - pain:log_pcv)
+anova(fit_interact)
+```
+
+```{r}
+fit_interact = update(fit_interact, . ~ . - log_pcv)
+anova(fit_interact)
+```
+```{r}
+fit_interact = update(fit_interact, . ~ . - pain:temperature)
+anova(fit_interact)
+```
+```{r}
+fit_interact = update(fit_interact, . ~ . - log_tp)
+anova(fit_interact)
+```
+```{r}
+summary(fit_interact)
+```
+Final Model: 
+\[
+Y = \beta_0 
++ \beta_1 \,\text{pain}_{\text{continuous}}
++ \beta_2 \,\text{pain}_{\text{depressed}}
++ \beta_3 \,\text{pain}_{\text{mild}}
++ \beta_4 \,\text{pain}_{\text{severe}}
++ \beta_5 \,\text{temperature}
++ \beta_6 \,\text{inv\_pulse}
++ \varepsilon
+\]
+
+
+
+Interpretation of each covariate in the final model: 
+
+pain (continuous): Horses in the continuous pain category have an expected log-respiratory-rate that is 0.171 units higher than horses in the reference pain category, holding temperature and inverse pulse constant.
+
+pain (depressed): Horses rated as depressed have an expected log-respiratory-rate that is 0.126 units higher than horses in the reference pain category, adjusting for temperature and inverse pulse.
+
+pain (mild): Horses with mild pain have an expected log-respiratory-rate that is 0.076 units higher than the reference category, controlling for temperature and inverse pulse.
+
+pain (severe): Horses with severe pain have an expected log-respiratory-rate that is 0.090 units higher than horses in the reference category, holding temperature and inverse pulse constant.
+
+temperature: For each 1-degree increase in temperature, the expected log-respiratory-rate increases by 0.0749 units, controlling for pain level and inverse pulse.
+
+inverse pulse (inv_pulse): For each 1-unit increase in inverse pulse (which corresponds to a decrease in pulse rate), the expected log-respiratory-rate decreases by 36.61 units, holding pain level and temperature constant.
+
+\qed
+
+\problem
+\textit{Proof}.
+```{r}
+#Mixed-effects Model
+
+Y = horse$respiratory_rate
+horse$pain = factor(horse$pain)
+horse$surgical_lesion = factor(horse$surgical_lesion)
+horse$peristalsis = factor(horse$peristalsis)
+horse$abdominal_distension = factor(horse$abdominal_distension)
+horse$peripheral_pulse = factor(horse$peripheral_pulse)
+horse$temperature_of_extremities = factor(horse$temperature_of_extremities)
+horse$surgery <- factor(horse$surgery)
+horse$outcome <- factor(horse$outcome)
+horse$age <- factor(horse$age)
+
+```
+
+```{r}
+#chosen random effects
+
+# Used transformed variables from problem 8 for reference
+
+library(lme4)
+mixed_eff_mod = lmer(
+  Y ~ temperature + inv_pulse + log_pcv + log_tp + outcome + surgery + abdominal_distension + pain + 
+(1 | temperature_of_extremities) +(1 | peripheral_pulse) + (1 | age) + (1 |surgical_lesion ) + (1 | peristalsis),
+  data = horse)
+
+```
+
+```{r}
+sigma = data.frame(summary(mixed_eff_mod)$varcor)$sdcor
+names(sigma) = data.frame(summary(mixed_eff_mod)$varcor)$grp
+```
+
+```{r}
+ICC = sigma^2 / sum(sigma^2)
+print(ICC)
+```
+
+```{r}
+summary(mixed_eff_mod, correlation = FALSE)
+anova(mixed_eff_mod)
+```
+```{r}
+#Box Cox
+Y = horse$respiratory_rate
+
+lambda = seq(-2, 2, 0.01)
+loglik = numeric(401)
+for (i in 1:401)
+{
+  if (lambda[i] == 0)
+  {
+    Ypower = log(Y)
+  }
+  else
+  {
+    Ypower = (Y^lambda[i] - 1) / lambda[i]
+  }
+  power = lmer(Ypower ~ temperature + inv_pulse + log_pcv + log_tp + outcome + surgery + abdominal_distension + pain + 
+(1 | temperature_of_extremities) +(1 | peripheral_pulse) + (1 | age) + (1 |surgical_lesion ) + (1 | peristalsis), horse)
+  loglik[i] = logLik(power)[1] + (lambda[i] - 1) * sum(log(Y))
+}
+
+```
+
+```{r}
+alpha = 0.05
+CI = range(lambda[loglik > max(loglik) - qchisq(alpha, 1, lower.tail = FALSE) / 2])
+print(CI)
+plot(lambda, loglik, "l", xlab = expression(lambda), ylab = "
+Profile Log-Likelihood", lwd = 4)
+abline(h = max(loglik) - qchisq(0.95, 1) / 2, lty = 2, lwd = 4)
+abline(v = CI, lty = 2, lwd = 4)
+```
+
+
+The covariates chosen as random effects are age, peripheral_pulse, peristalsis, and temperature_of_extremities, since these were the categorical variables with the largest nonzero variance components in the mixed-effects model. All categorical variables with exactly zero variance components were treated as fixed effects, as instructed.
+
+A suitable transformation for our response variable is.
+
+The total variation in your response variable explained by each random effect is as follows: abdominal_distension (variance = 0.02668, 2.67%) and temperature_of_extremities (variance = 0.00652, 0.65%), and surgery (variance = 0.005579, 0.56%).
+
+
+Another interpretation for each ICC:
+ICC(abdominal_distension) = 0.0936
+Two horses with the same abdominal distension level have an expected correlation of about 9.4% in their log respiratory rates. This points too a moderate grouping effect of adominal distension level on respiratory rate.
+
+ICC(temperature_of_extremities) = 0.0229
+Two horses with the same extremity temperature category have an expected correlation of about 2.3% in their log respiratory rates. This points to a very small grouping effect of extremity temperature on respiratory rate.
+
+ICC(surgery) = 0.01956768
+Two horses that underwent the same type of surgery have an expected correlation of about 2.0% in their log respiratory rates. This points to a very small grouping effect of surgery on respiratory rate.
+
+
+
+\qed
+
+\problem
+\textit{Proof}.
+```{r}
+base_model <- lm(Y ~ temperature + inv_pulse + log_pcv + log_tp, data = horse)
+print(summary(base_model))
+```
+
+```{r}
+Y = log(horse$respiratory_rate)
+X = model.matrix(base_model)
+n = dim(X)[1]
+p = dim(X)[2] - 1
+residuals = base_model$residuals
+plot(rstandard(base_model) ~ temperature + inv_pulse + log_pcv + log_tp, horse, ylab = "Standardized
+Residuals", pch = 16)
+abline(h = 0, lty = 2, lwd = 2)
+```
+```{r}
+#Studentized Breusch-Pagan Test
+Yaux = residuals(base_model)^2
+aux = lm(Yaux ~ temperature + inv_pulse + log_pcv + log_tp, horse)
+BP = n * summary(aux)$r.squared
+print(BP)
+pvalue = pchisq(BP, p, lower.tail = FALSE)
+print(pvalue)
+library(lmtest)
+bptest(base_model)
+```
+
+```{r}
+#Brown-Forsythe Test -- pain
+
+library(car)
+leveneTest(Y ~ pain, data = horse)
+```
+
+```{r}
+#Brown-Forsythe Test -- outcome
+library(car)
+leveneTest(Y ~ outcome, data = horse)
+
+```
+```{r}
+#Brown-Forsythe Test -- temp of extremities
+
+library(car)
+leveneTest(Y ~ temperature_of_extremities, data = horse)
+
+```
+
+```{r}
+#Brown-Forsythe Test -- peripheral pulse
+library(car)
+leveneTest(Y ~ peripheral_pulse, data = horse)
+```
+
+```{r}
+#Brown-Forsythe Test -- abdominal distension
+
+library(car)
+leveneTest(Y ~ abdominal_distension, data = horse)
+
+```
+
+```{r}
+#Brown-Forsythe Test -- peristalsis
+
+library(car)
+leveneTest(Y ~ peristalsis, data = horse)
+```
+For the quantitative variables, a studentized Breusch–Pagan test was conducted. Because the p-value is well above 0.05, we fail to reject the null hypothesis of constant variance. So here is no evidence of heteroscedasticity, and the residual variance does not appear to depend on any of the included quantitative predictors.
+
+
+For the qualitative varibles, a Brown–Forsythe tests was conducted. 
+
+The Brown–Forsythe test yields p = 0.0006161, providing statistically significant evidence that the residual variance differs across pain groups (heteroscedasticity).
+
+The Brown–Forsythe test yields p = 0.2814, so there is no statistically significant evidence of differing variances across outcome groups (homoscedasticity).
+
+The Brown–Forsythe test yields p = 0.4136, so there is no statistically significant evidence that the residual variance differs across peripheral-pulse categories.
+
+The Brown–Forsythe test yields p = 0.0444, indicating statistically significant evidence that residual variances differ across abdominal-distension groups (heteroscedasticity).
+
+The Brown–Forsythe test yields p = 0.061, so there is no statistically significant evidence of variance differences across peristalsis groups at the 5% level.
+The Brown–Forsythe test yields p = 0.061, so there is no statistically significant evidence that the residual variance differs across peristalsis groups at the 5% level.
+
+\qed
+
+\problem
+\textit{Proof}.
+
+```{r}
+
+Y = log(horse$respiratory_rate)
+quant_model = lm(Y ~ temperature + inv_pulse + log_pcv + log_tp, horse)
+
+ols_summary = summary(quant_model)
+
+X = model.matrix(quant_model)
+n = nrow(X)
+p = ncol(X)
+beta = coef(quant_model)
+residuals = quant_model$residuals
+
+```
+
+```{r}
+vcovOLS = summary(quant_model)$sigma^2 * summary(quant_model)$cov.unscaled
+vcovOLS
+confint(quant_model)
+
+```
+
+```{r}
+#Heteroscedasticity-Consistent Estimators
+
+
+library(sandwich)
+vcovHC3 = vcovHC(quant_model, type = "HC3")
+vcovHC3
+```
+
+```{r}
+alpha = 0.05
+HC3_CI = cbind(
+  beta - qt(1 - alpha/2, n - p) * sqrt(diag(vcovHC3)),
+  beta + qt(1 - alpha/2, n - p) * sqrt(diag(vcovHC3))
+)
+
+colnames(HC3_CI) = colnames(confint(quant_model))
+HC3_CI
+```
+
+```{r}
+library(lmtest)
+confint(coeftest(quant_model, vcov. = vcovHC3))
+```
+
+```{r}
+test = matrix(0, p, 4)
+rownames(test) = names(beta)
+colnames(test) = c("Estimate", "Std. Error", "t value", "Pr(>|t|)")
+
+test[,1] = beta
+test[,2] = sqrt(diag(vcovHC3))
+test[,3] = test[,1] / test[,2]
+test[,4] = 2 * pt(abs(test[,3]), n - p, lower.tail = FALSE)
+
+test
+```
+
+```{r}
+
+hc3_test = coeftest(quant_model, vcov. = vcovHC3)
+
+```
+
+```{r}
+
+results_table <- data.frame(
+  Coefficient = rownames(ols_summary$coefficients),
+  Estimate = ols_summary$coefficients[, "Estimate"],
+  OLS_SE = ols_summary$coefficients[, "Std. Error"],
+  HC3_SE = sqrt(diag(vcovHC3)),
+  t_HC3 = hc3_test[, "t value"],
+  p_HC3 = hc3_test[, "Pr(>|t|)"]
+)
+
+results_table
+```
+
+The HC3 standard errors are larger for most of the coefficients. 
+(Intercept) OLS SE: 1.86166629 HC3 SE: 1.83378787
+temperature OLS SE:0.04630927 HC3 SE:0.04588259
+pulse OLS SE: 6.97628258 HC3 SE:7.07424389
+PCV OLS SE: 0.13902340 HC3 SE: 0.13902340
+total_protein OLS SE: 0.03208568 HC3 SE:0.03208568
+
+As the SEs increased, the HC3 t-values got smaller. 
+(Intercept): -2.145 to -1.965
+temperature: 2.442 to 2.205
+pulse: 5.967 to 5.144
+PCV: -0.640 to -0.568
+total_protein: -1.011 to -0.972.
+
+The p-values got larger. 
+(Intercept)	0.0330 to 0.0506 (no longer < 0.05)	
+temperature	0.0154 to 0.0284 (still < 0.05)	
+pulse	8.82e-09 to 5.67e-07 (still extremely significant)	
+PCV	0.5228 to 0.5709 (still NS)	
+total_protein	0.3132 to 0.3319 (still NS)
+
+The intercept is the only coefficient whose significance status changed. In the OLS (Intercept) is significant (p = 0.033), but HC3 shows it is only marginally significant (p = 0.0506).
+
+The HC3 CIs are consistently wider:
+
+(Intercept) OLS [-216.74, -9.22]; HC3 [-226.25, 0.29]. Which now covers zero.
+temperature: OLS [0.656,6.142]; HC3 [0.362,6.43]
+pulse: OLS [0.169,0.336]; HC3 [0.156,0.349]
+PCV: OLS [-0.283, 0.144]; HC3 [-0.310, 0.171]
+total_protein: OLS [-0.109, 0.0353]; HC3 [-0.112, 0.038]
+
+The qualitative conclusions remained the same for temperature, pulse, PCV and total_protein. 
+
+\qed
+
+
+\problem
+\textit{Proof}.
+```{r}
+# Weighted LS using temperature
+fit = lm(Y ~ temperature, horse)
+summary(fit)
+X = model.matrix(fit)
+n = dim(X)[1]
+p = dim(X)[2] - 1
+residuals = fit$residuals
+plot(rstandard(fit) ~ temperature, horse, ylab = "Standardized
+Residuals", pch = 16)
+abline(h = 0, lty = 2, lwd = 2)
+```
+The variance of the residuals appears to be an increasing function of temperature. Since the weights are inversely proportional to the residual variances, we infer that the weights would need to be a decreasing function of temperature.
+
+```{r}
+w = rep(1, n)
+err = Inf
+tol = 1e-10
+niter = 0
+maxiter = 1e3
+while (err > tol & niter < maxiter)
+{
+  aux = lm(log(residuals^2) ~ log(temperature), horse)
+  err = sum(abs(w - exp(-aux$fitted.values))) / sum(w)
+  w = exp(-aux$fitted.values)
+  WLS = lm(Y ~ temperature, horse, weights = w)
+  residuals = WLS$residuals
+  niter = niter + 1
+}
+summary(aux)
+summary(WLS)
+```
+We estimate that $\sigma^2_i\approx1.64\times 10^{-16}\cdot temperature_i^{9.33}$ 
+```{r}
+plot(WLS$fitted.values, rstandard(WLS), xlab = "Fitted Values", ylab = "Weighted Standardized Residuals", pch = 16)
+abline(h = 0, lty = 2, lwd = 2)
+```
+
+```{r}
+WLS_all = lm(Y ~ temperature + inv_pulse + log_pcv + log_tp, horse, weights = w)
+summary(WLS_all)
+```
+The WLS standard errors are slightly smaller than the corresponding OLS estimate.
+
+```{r}
+#t-test and CIs
+t_WLS = coef(WLS_all) / summary(WLS_all)$coefficients[, "Std. Error"]
+t_WLS
+
+CI_WLS = confint(WLS_all, level = 0.95)
+CI_WLS
+
+
+t_OLS = coef(quant_model) / summary(quant_model)$coefficients[, "Std. Error"]
+t_OLS
+
+CI_OLS = confint(quant_model, level = 0.95)
+CI_OLS
+```
+Temperature became significant under WLS, where is was insignificant in OLS. Inv_pulse is highly significant in both. The other coefficients don't change much in significance. The temperature CI under WLS does not include 0, and it does in OLS. WLS gives slightly narrower CIs for all covariates compared to OLS. 
+
+\qed
+
+\problem
+\textit{Proof}.
+```{r}
+# mean comparisons for pain
+Q = factor(horse$pain)
+n = length(Q)
+K = length(levels(Q))
+mu = aggregate(Y ~ pain, data = horse, FUN = function(x) mean(x))[,2]
+sigma = sqrt(sum((Y - mu[Q])^2) / (n - K))
+SE = sigma * sqrt(2 * K / n)
+diff = outer(mu, mu, "-")
+diff = diff[lower.tri(diff)]
+lab = outer(levels(Q), levels(Q), function(x, y) {paste0(x, "-", y)})
+names(diff) = lab[lower.tri(lab)]
+CI = cbind(diff - qt(1 - alpha / 2, n - K) * SE, diff + qt(1 - alpha / 2, n - K) * SE)
+colnames(CI) = c("Lower Bound", "Upper Bound")
+print(CI)
+```
+```{r}
+# Tukey’s Honestly Significant Difference Method
+# cannot do manual calculations because group sizes are unequal
+TukeyHSD(aov(Y ~ pain, horse))
+```
+Tukey’s Honestly Significant Difference Method (Tukey's HSD) calculates pairwise differences using a critical value from Tukey's studentized range distribution rather than the t-distribution. It can only take positive values and is parametrized by the number of groups (k) and the residual (n-k) degrees of freedom. For each pair of group means $\hat{\mu}_k-\hat{\mu}_\ell$, simultaneous 95% CIs are computed such that FWER $\leq\alpha$ using the upper $\alpha$-quantile of the studentized range divided by $\sqrt2$ and multiplied by the pooled sample standard deviation times the square root of 2 times the number of groups divded by the sample size, eg $\hat{\mu}_k-\hat{\mu}_\ell\pm \frac{R_{K,n-K;\alpha}}{\sqrt2} \cdot S\sqrt{\frac{2K}{n}}$.
+
+The CIs using the t-distribution are generally wider than the narrower Tukey's estimates. Tukey's estimates take into account the studentized range distribution, which adjusts for the fact that multiple comparisons are being made simultaneously while controlling the FWER. Since Tukey's is more conservative, there are less significant comparisons under this method. Only 2 comparisons are significant under Tukey's (continuous-alert and depressed-alert). These CIs do not contain 0. For the CIs using the t-distribution, both of those comparisons are significant, as well as two others (severe-alert and mild-continuous).
+\qed
+
+\problem
+\textit{Proof}.
 
 \qed
