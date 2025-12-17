@@ -932,5 +932,14 @@ The CIs using the t-distribution are generally wider than the narrower Tukey's e
 
 \problem
 \textit{Proof}.
+```{r}
+fit = lm(Y ~ ., data = horse)
+summary(fit)
 
+```
+
+We tested the global null hypothesis that all regression coefficients are equal to zero against the alternative that at least one coefficient is nonzero. The overall F-test from the regression output provides a global hypothesis test that controls the family-wise error rate. The F-statistic of 60.45 with a p-value less than 2.2×10^⁻16 leads us to reject the global null hypothesis. Therefore, there is strong evidence that at least one covariate has a statistically significant effect on the response variable.
 \qed
+
+\problem
+\textit{Proof}.
